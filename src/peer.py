@@ -30,10 +30,8 @@ config = None
 ex_output_file = None
 ex_received_chunk = dict()
 ex_sending_chunkhash = dict()   # 记录可能会发送给其它peer的chunk的hash(收到了谁的whohas)
-send_connection = list()        # 记录已经建立的发送连接
 receive_connection = dict()     # 记录已经建立的接收连接, (addr_from, chunk_hash)
 finished_chunks = list()        # 记录已经下载完成的chunk
-ex_downloading_chunkhash = ""
 
 window_size = 1        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
 ssthresh = 64
@@ -98,14 +96,13 @@ def process_download(sock, chunkfile, outputfile):
 
 
 def deal_whohas(data, sock, from_addr):
-    global ex_sending_chunkhash, send_connection
+    global ex_sending_chunkhash
     # received an WHOHAS pkt
     # see what chunk the sender has
     whohas_chunk_hash = data[:20]
     # bytes to hex_str
     chunkhash_str = bytes.hex(whohas_chunk_hash)
-    if len(send_connection) < MAX_SENDING:
-        ex_sending_chunkhash[from_addr] = chunkhash_str
+    if len(ex_sending_chunkhash) < MAX_SENDING:
         print(f"whohas: {chunkhash_str}, has: {list(config.haschunks.keys())}")
         if chunkhash_str in config.haschunks:
             # send back IHAVE pkt
@@ -135,10 +132,11 @@ def deal_ihave(data, sock, from_addr):
         sock.sendto(get_pkt, from_addr)
 
 
-def deal_get(sock, from_addr):
-    global send_connection
-    if from_addr not in send_connection:
-        send_connection.append(from_addr)
+def deal_get(data, sock, from_addr):
+    global ex_sending_chunkhash
+    chunk_hash = data[:20]
+    if from_addr not in ex_sending_chunkhash.keys():
+        ex_sending_chunkhash[from_addr] = chunk_hash
     for i in range(window_size):
         # received a GET pkt
         left = i * MAX_PAYLOAD
@@ -210,7 +208,7 @@ def deal_data(data, Seq, sock, from_addr):
 
 
 def deal_ack(Ack, sock, from_addr):
-    global window_size, ssthresh, control_state, ex_sending_chunkhash, send_connection
+    global window_size, ssthresh, control_state, ex_sending_chunkhash
     # received an ACK pkt
     ack_num = socket.ntohl(Ack)
     if ack_num in ACK_dict is True:
@@ -222,7 +220,7 @@ def deal_ack(Ack, sock, from_addr):
             control_state = 0
             left = (ack_num) * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            next_data = config.haschunks[ex_sending_chunkhash][left: right]
+            next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
             # send next data
             data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                       socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
@@ -240,13 +238,12 @@ def deal_ack(Ack, sock, from_addr):
         if (ack_num + window_size - 1) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # --------------断开连接-----------------------------------
             ex_sending_chunkhash.pop(from_addr)
-            send_connection.pop(from_addr)
             print(f"finished sending {ex_sending_chunkhash}")
 
         else:
             left = (ack_num + window_size - 1) * MAX_PAYLOAD
             right = min((ack_num + window_size) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            next_data = config.haschunks[ex_sending_chunkhash][left: right]
+            next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
             # send next data
             data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                       socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + window_size), 0)
@@ -267,7 +264,7 @@ def process_inbound_udp(sock):
     elif Type == 1:
         deal_ihave(data, sock, from_addr)
     elif Type == 2:
-        deal_get(sock, from_addr)
+        deal_get(data, sock, from_addr)
     elif Type == 3:
         # -------------停止检测已经收到包的时间-------------------------
         sample_RTT = time.time() - time_recoder[Seq][0]
