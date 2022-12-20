@@ -40,7 +40,7 @@ ssthresh = 64
 control_state = 0      # 0是slow start， 1是congestion avoidance
 ACK_dict = dict()      # (ack序号:接收次数),用于发送端
 file_cache = dict()    # (seq:data),用于接收端,在处理data报文时需要判断是否失序,将失序报文暂存缓存中直到收到缺失报文
-finished_packetid = 0  # 记录接收方已经接受到哪个包了
+finished_dict = dict()  # (),记录接收方已经接受到哪个包了
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
@@ -126,7 +126,7 @@ def deal_ihave(data, sock, from_addr):
     # received an IHAVE pkt
     # see what chunk the sender has
     get_chunk_hash = data[:20]
-    if get_chunk_hash not in receive_connection.values():
+    if get_chunk_hash not in receive_connection.values() and from_addr not in receive_connection.keys():
         receive_connection[from_addr] = get_chunk_hash
         # send back GET pkt
         get_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 2, socket.htons(HEADER_LEN),
@@ -155,15 +155,15 @@ def deal_get(sock, from_addr):
 
 def deal_data(data, Seq, sock, from_addr):
     global finished_packetid, file_cache, receive_connection, finished_chunks
-
+    chunk_hash = receive_connection[from_addr]
     if Seq == finished_packetid + 1:
         finished_packetid = Seq
         # received a DATA pkt
-        ex_received_chunk[receive_connection[from_addr]] += data
+        ex_received_chunk[chunk_hash] += data
 
         while True:
             if (finished_packetid+1) in file_cache:
-                ex_received_chunk[receive_connection[from_addr]] += file_cache[finished_packetid+1]
+                ex_received_chunk[chunk_hash] += file_cache[finished_packetid+1]
                 finished_packetid += 1
             else:
                 break
@@ -181,27 +181,27 @@ def deal_data(data, Seq, sock, from_addr):
         sock.sendto(ack_pkt, from_addr)
 
     # see if finished
-    if len(ex_received_chunk[receive_connection[from_addr]]) == CHUNK_DATA_SIZE:
+    if len(ex_received_chunk[chunk_hash]) == CHUNK_DATA_SIZE:
         # finished downloading this chunkdata!
         # dump your received chunk to file in dict form using pickle
-        finished_chunks.append(receive_connection[from_addr])
+        finished_chunks.append(chunk_hash)
         receive_connection.pop(from_addr)
         with open(ex_output_file, "wb") as wf:
             pickle.dump(ex_received_chunk, wf)
 
         # add to this peer's haschunk:
-        config.haschunks[receive_connection[from_addr]] = ex_received_chunk[receive_connection[from_addr]]
+        config.haschunks[chunk_hash] = ex_received_chunk[chunk_hash]
 
         # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
         print(f"GOT {ex_output_file}")
 
         # The following things are just for illustration, you do not need to print out in your design.
         sha1 = hashlib.sha1()
-        sha1.update(ex_received_chunk[receive_connection[from_addr]])
+        sha1.update(ex_received_chunk[chunk_hash])
         received_chunkhash_str = sha1.hexdigest()
-        print(f"Expected chunkhash: {receive_connection[from_addr]}")
+        print(f"Expected chunkhash: {chunk_hash}")
         print(f"Received chunkhash: {received_chunkhash_str}")
-        success = receive_connection[from_addr] == received_chunkhash_str
+        success = chunk_hash == received_chunkhash_str
         print(f"Successful received: {success}")
         if success:
             print("Congrats! You have completed the example!")
@@ -214,10 +214,9 @@ def deal_ack(Ack, sock, from_addr):
     # received an ACK pkt
     ack_num = socket.ntohl(Ack)
     if ack_num in ACK_dict is True:
-        if window_size > ssthresh:
-            control_state = 1
         ACK_dict[ack_num] += 1
-        if ACK_dict[ack_num] >= 3:                       #是否要对其进行更改？
+        if ACK_dict[ack_num] >= 3:      #是否要对其进行更改？
+            ACK_dict.pop(ack_num)
             ssthresh = max(window_size / 2, 2)
             window_size = 1
             control_state = 0
@@ -236,6 +235,8 @@ def deal_ack(Ack, sock, from_addr):
             window_size += 1
         else:
             window_size = math.floor(window_size + 1 / window_size)  # ????
+        if window_size > ssthresh:
+            control_state = 1
         if (ack_num + window_size - 1) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
             # --------------断开连接-----------------------------------
             ex_sending_chunkhash.pop(from_addr)
