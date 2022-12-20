@@ -37,8 +37,9 @@ window_size = 1        # 滑动窗口大小,(应该时每次开始传输chunk的
 ssthresh = 64
 control_state = 0      # 0是slow start， 1是congestion avoidance
 ACK_dict = dict()      # (ack序号:接收次数),用于发送端
-file_cache = dict()    # (seq:data),用于接收端,在处理data报文时需要判断是否失序,将失序报文暂存缓存中直到收到缺失报文
-finished_dict = dict()  # (),记录接收方已经接受到哪个包了
+file_cache = dict()    # (from_address : dict(packetid : data)), 用于接受方
+finished_dict = dict()  # (from_address, finish_num),记录接收方已经接受到哪个包了,用于接受方
+finished_send_dict = dict()  # (from_address:packetid), 用于发送方记录给确定的某个接收方传输的最新报文编号
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
@@ -137,6 +138,8 @@ def deal_get(data, sock, from_addr):
     chunk_hash = data[:20]
     if from_addr not in ex_sending_chunkhash.keys():
         ex_sending_chunkhash[from_addr] = chunk_hash
+    if from_addr not in finished_send_dict:
+        finished_send_dict[from_addr] = window_size
     for i in range(window_size):
         # received a GET pkt
         left = i * MAX_PAYLOAD
@@ -146,36 +149,41 @@ def deal_get(data, sock, from_addr):
         # send back DATA
         data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                   socket.htons(HEADER_LEN), socket.htonl(i+1), 0)
+
         # -----------记录发送时间-------------------------------------
         time_recoder[i+1] = (time.time(), from_addr)
         sock.sendto(data_header + chunk_data, from_addr)
 
 
 def deal_data(data, Seq, sock, from_addr):
-    global finished_packetid, file_cache, receive_connection, finished_chunks
+    global finished_dict, file_cache, receive_connection, finished_chunks
     chunk_hash = receive_connection[from_addr]
-    if Seq == finished_packetid + 1:
-        finished_packetid = Seq
+    if from_addr not in finished_dict:
+        finished_dict[from_addr] = 0
+    if from_addr not in file_cache:
+        file_cache[from_addr] = dict()
+    if Seq == finished_dict[from_addr] + 1:
+        finished_dict[from_addr] = Seq
         # received a DATA pkt
         ex_received_chunk[chunk_hash] += data
 
         while True:
-            if (finished_packetid+1) in file_cache:
-                ex_received_chunk[chunk_hash] += file_cache[finished_packetid+1]
-                finished_packetid += 1
+            if (finished_dict[from_addr]+1) in file_cache[from_addr]:
+                ex_received_chunk[chunk_hash] += file_cache[from_addr][finished_dict[from_addr]+1]
+                finished_dict[from_addr] += 1
             else:
                 break
 
         # send back ACK
         ack_pkt = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
-                              0, finished_packetid)
+                              0, finished_dict[from_addr])
         sock.sendto(ack_pkt, from_addr)
 
-    elif Seq > finished_packetid + 1:
-        file_cache[Seq] = data
+    elif Seq > finished_dict[from_addr] + 1:
+        file_cache[from_addr][Seq] = data
         # send back ACK
         ack_pkt = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
-                              0, finished_packetid)
+                              0, finished_dict[from_addr])
         sock.sendto(ack_pkt, from_addr)
 
     # see if finished
@@ -213,7 +221,7 @@ def deal_ack(Ack, sock, from_addr):
     ack_num = socket.ntohl(Ack)
     if ack_num in ACK_dict is True:
         ACK_dict[ack_num] += 1
-        if ACK_dict[ack_num] >= 3:      #是否要对其进行更改？
+        if ACK_dict[ack_num] >= 3:       #是否要对其进行更改？
             ACK_dict.pop(ack_num)
             ssthresh = max(window_size / 2, 2)
             window_size = 1
@@ -235,21 +243,23 @@ def deal_ack(Ack, sock, from_addr):
             window_size = math.floor(window_size + 1 / window_size)  # ????
         if window_size > ssthresh:
             control_state = 1
-        if (ack_num + window_size - 1) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
-            # --------------断开连接-----------------------------------
-            ex_sending_chunkhash.pop(from_addr)
-            print(f"finished sending {ex_sending_chunkhash}")
+        while finished_send_dict[from_addr] < ack_num + window_size:
+            if (finished_send_dict[from_addr]) * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+                # --------------断开连接-----------------------------------
+                ex_sending_chunkhash.pop(from_addr)
+                print(f"finished sending {ex_sending_chunkhash}")
 
-        else:
-            left = (ack_num + window_size - 1) * MAX_PAYLOAD
-            right = min((ack_num + window_size) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
-            # send next data
-            data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
-                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + window_size), 0)
-            # -----------记录发送时间-------------------------------------
-            time_recoder[ack_num + window_size] = (time.time(), from_addr)
-            sock.sendto(data_header + next_data, from_addr)
+            else:
+                left = (finished_send_dict[from_addr]) * MAX_PAYLOAD
+                right = min((finished_send_dict[from_addr] + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
+                next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
+                # send next data
+                data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
+                                          socket.htons(HEADER_LEN + len(next_data)), socket.htonl(finished_send_dict[from_addr] + 1), 0)
+                finished_send_dict[from_addr] += 1
+                # -----------记录发送时间-------------------------------------
+                time_recoder[ack_num + window_size] = (time.time(), from_addr)
+                sock.sendto(data_header + next_data, from_addr)
 
 
 def process_inbound_udp(sock):
