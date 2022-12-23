@@ -41,7 +41,7 @@ def drop_session():
             success = False
             break 
         
-    # time.sleep(5)
+    # time.sleep(5000)
     
     for p in drop_session.peer_list.values():
         p.terminate_peer()
