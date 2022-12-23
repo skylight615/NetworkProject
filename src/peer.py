@@ -32,6 +32,7 @@ ex_received_chunk = dict()
 ex_sending_chunkhash = dict()   # 记录可能会发送给其它peer的chunk的hash(收到了谁的whohas)
 receive_connection = dict()     # 记录已经建立的接收连接, (addr_from, chunk_hash)
 finished_chunks = list()        # 记录已经下载完成的chunk
+count = 0                       # 记录下载指令应该接收到多少chunk
 
 window_size = 1        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
 ssthresh = 64
@@ -52,8 +53,7 @@ def process_download(sock, chunkfile, outputfile):
     '''
     if DOWNLOAD is used, the peer will keep getting files until it is done
     '''
-    global ex_output_file
-    global ex_received_chunk
+    global ex_output_file, ex_received_chunk, count
 
     ex_output_file = outputfile
     count = 0
@@ -79,20 +79,22 @@ def process_download(sock, chunkfile, outputfile):
         for p in peer_list:
             if int(p[0]) != config.identity:
                 sock.sendto(whohas_pkt, (p[1], int(p[2])))
-    # ------------------补全chunk---------------------------------
-    while len(finished_chunks) != count:
-        for chunk_hash in ex_received_chunk.keys():
-            if chunk_hash not in finished_chunks:
-                datahash = bytes.fromhex(chunk_hash)
-                whohas_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 0, socket.htons(HEADER_LEN),
-                                            socket.htons(HEADER_LEN + len(datahash)), socket.htonl(0), socket.htonl(0))
-                whohas_pkt = whohas_header + datahash
 
-                # Step3: flooding whohas to all peers in peer list
-                peer_list = config.peers
-                for p in peer_list:
-                    if int(p[0]) != config.identity:
-                        sock.sendto(whohas_pkt, (p[1], int(p[2])))
+
+def complement_integrity(sock):
+    global ex_received_chunk
+    for chunk_hash in ex_received_chunk.keys():
+        if chunk_hash not in finished_chunks:
+            datahash = bytes.fromhex(chunk_hash)
+            whohas_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 0, socket.htons(HEADER_LEN),
+                                        socket.htons(HEADER_LEN + len(datahash)), socket.htonl(0), socket.htonl(0))
+            whohas_pkt = whohas_header + datahash
+
+            # Step3: flooding whohas to all peers in peer list
+            peer_list = config.peers
+            for p in peer_list:
+                if int(p[0]) != config.identity:
+                    sock.sendto(whohas_pkt, (p[1], int(p[2])))
 
 
 
@@ -188,10 +190,12 @@ def deal_data(data, Seq, sock, from_addr):
 
     # see if finished
     if len(ex_received_chunk[chunk_hash]) == CHUNK_DATA_SIZE:
+        file_cache.pop(from_addr)
         # finished downloading this chunkdata!
         # dump your received chunk to file in dict form using pickle
         finished_chunks.append(chunk_hash)
         receive_connection.pop(from_addr)
+
         with open(ex_output_file, "wb") as wf:
             pickle.dump(ex_received_chunk, wf)
 
@@ -338,7 +342,7 @@ def getTimeout():
 
 
 def peer_run(config):
-    global time_recoder
+    global time_recoder, count
     addr = (config.ip, config.port)
     sock = simsocket.SimSocket(config.identity, addr, verbose=config.verbose)
 
@@ -355,6 +359,8 @@ def peer_run(config):
             else:
                 # No pkt nor input arrives during this period 
                 pass
+            if count != len(finished_chunks) and len(receive_connection) == 0:
+                complement_integrity(sock)
     except KeyboardInterrupt:
         pass
     finally:
