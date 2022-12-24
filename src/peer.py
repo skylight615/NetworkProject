@@ -2,6 +2,8 @@ import math
 import sys
 import os
 import select
+import traceback
+
 import util.simsocket as simsocket
 import struct
 import socket
@@ -21,7 +23,7 @@ Please refer to the example files - example/dumpreceiver.py and example/dumpsend
 BUF_SIZE = 1400
 HEADER_LEN = struct.calcsize("HBBHHII")
 CHUNK_DATA_SIZE = 512 * 1024
-MAX_PAYLOAD = 1380
+MAX_PAYLOAD = 1384
 MAGIC = 52305
 TEAM = 27
 MAX_SENDING = 4
@@ -46,6 +48,7 @@ RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
 TIMEOUT = 100
 time_recoder = dict()  #(seq:time)
+acklist = list()
 
 
 
@@ -154,7 +157,7 @@ def deal_get(data, sock, from_addr):
         # send back DATA
         data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                   socket.htons(HEADER_LEN), socket.htonl(i+1), 0)
-
+        acklist.append(i+1)
         # -----------记录发送时间-------------------------------------
         time_recoder[from_addr][i+1] = (time.time(), from_addr)
         sock.sendto(data_header + chunk_data, from_addr)
@@ -167,6 +170,8 @@ def deal_data(data, Seq, sock, from_addr):
         finished_dict[from_addr] = 0
     if from_addr not in file_cache:
         file_cache[from_addr] = dict()
+    if Seq == 150:
+        print()
     if Seq == finished_dict[from_addr] + 1:
         finished_dict[from_addr] = Seq
         # received a DATA pkt
@@ -174,7 +179,7 @@ def deal_data(data, Seq, sock, from_addr):
 
         while True:
             if (finished_dict[from_addr]+1) in file_cache[from_addr]:
-                ex_received_chunk[chunk_hash] += file_cache[from_addr][finished_dict[from_addr]+1]
+                ex_received_chunk[bytes.hex(chunk_hash)] += file_cache[from_addr][finished_dict[from_addr]+1]
                 finished_dict[from_addr] += 1
             else:
                 break
@@ -191,11 +196,6 @@ def deal_data(data, Seq, sock, from_addr):
                               0, socket.htonl(finished_dict[from_addr]))
         sock.sendto(ack_pkt, from_addr)
     # see if finished
-    if Seq == 170:
-        tem = len(ex_received_chunk[bytes.hex(chunk_hash)])
-        tem2 = len(file_cache[from_addr])
-        temp = file_cache[from_addr]
-        t = finished_dict[from_addr]
     if len(ex_received_chunk[bytes.hex(chunk_hash)]) == CHUNK_DATA_SIZE:
         file_cache.pop(from_addr)
         # finished downloading this chunkdata!
@@ -214,11 +214,11 @@ def deal_data(data, Seq, sock, from_addr):
 
         # The following things are just for illustration, you do not need to print out in your design.
         sha1 = hashlib.sha1()
-        sha1.update(ex_received_chunk[chunk_hash])
+        sha1.update(ex_received_chunk[bytes.hex(chunk_hash)])
         received_chunkhash_str = sha1.hexdigest()
         print(f"Expected chunkhash: {chunk_hash}")
         print(f"Received chunkhash: {received_chunkhash_str}")
-        success = chunk_hash == received_chunkhash_str
+        success = bytes.hex(chunk_hash) == received_chunkhash_str
         print(f"Successful received: {success}")
         if success:
             print("Congrats! You have completed the example!")
@@ -230,7 +230,10 @@ def deal_ack(Ack, sock, from_addr):
     global window_size, ssthresh, control_state, ex_sending_chunkhash
     # received an ACK pkt
     ack_num = Ack
-    if ack_num in ACK_dict is True:
+    if Ack == 380:
+        tem = time.time()-RTT_TIMEOUT
+        print()
+    if ack_num in ACK_dict:
         ACK_dict[ack_num] += 1
         if ACK_dict[ack_num] >= 3:       #是否要对其进行更改？
             ACK_dict[ack_num] = 0
@@ -242,7 +245,7 @@ def deal_ack(Ack, sock, from_addr):
             next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
             # send next data
             data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
-                                      socket.htonl(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
+                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
             # -----------记录发送时间-------------------------------------
             time_recoder[from_addr][ack_num+1] = (time.time(), from_addr)
             sock.sendto(data_header + next_data, from_addr)
@@ -260,13 +263,14 @@ def deal_ack(Ack, sock, from_addr):
                 ex_sending_chunkhash.pop(from_addr)
                 print(f"finished sending {ex_sending_chunkhash}")
                 break
-            else:
+            elif finished_send_dict[from_addr] < math.ceil(CHUNK_DATA_SIZE / MAX_PAYLOAD):
                 left = (finished_send_dict[from_addr]) * MAX_PAYLOAD
                 right = min((finished_send_dict[from_addr] + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
                 next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
                 # send next data
                 data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                           socket.htons(HEADER_LEN + len(next_data)), socket.htonl(finished_send_dict[from_addr] + 1), 0)
+                acklist.append(finished_send_dict[from_addr] + 1)
                 finished_send_dict[from_addr] += 1
                 # -----------记录发送时间-------------------------------------
                 time_recoder[from_addr][finished_send_dict[from_addr]] = (time.time(), from_addr)
@@ -375,6 +379,7 @@ def peer_run(config):
     except KeyboardInterrupt:
         pass
     finally:
+        tem = traceback.format_exc()
         sock.close()
 
 

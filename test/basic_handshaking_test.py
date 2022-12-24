@@ -17,7 +17,12 @@ def normal_session():
 
     handshaking_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp1/download_target.chunkhash test/tmp1/download_result.fragment\n''')
     time.sleep(blocking_time)
-    
+
+    # proc = handshaking_session.peer_list[("127.0.0.1", 48001)].process
+
+    # for line in proc.stdout:
+    #     print(line)
+
     for p in handshaking_session.peer_list.values():
         p.terminate_peer()
     
