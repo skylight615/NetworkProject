@@ -254,7 +254,7 @@ def deal_ack(Ack, sock, from_addr):
         if not control_state:
             window_size += 1
         else:
-            window_size += math.ceil(window_size + 1/window_size) # ????
+            window_size += math.floor(window_size + 1/window_size) # ????
         if window_size > ssthresh:
             control_state = 1
         while finished_send_dict[from_addr] < ack_num + window_size:
