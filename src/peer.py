@@ -46,7 +46,6 @@ finished_send_dict = dict()  # (from_address:packetid), 用于发送方记录给
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
-TIMEOUT = 100
 time_recoder = dict()  #(seq:time)
 acklist = list()
 
@@ -170,8 +169,6 @@ def deal_data(data, Seq, sock, from_addr):
         finished_dict[from_addr] = 0
     if from_addr not in file_cache:
         file_cache[from_addr] = dict()
-    if Seq == 150:
-        print()
     if Seq == finished_dict[from_addr] + 1:
         finished_dict[from_addr] = Seq
         # received a DATA pkt
@@ -254,7 +251,7 @@ def deal_ack(Ack, sock, from_addr):
         if not control_state:
             window_size += 1
         else:
-            window_size += math.floor(window_size + 1/window_size) # ????
+            window_size = math.floor(window_size + 1 / window_size)  # ????
         if window_size > ssthresh:
             control_state = 1
         while finished_send_dict[from_addr] < ack_num + window_size:
@@ -283,8 +280,6 @@ def process_inbound_udp(sock):
     # Receive pkt
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
-    if Type == 4:
-        print()
     Magic, hlen, plen, Seq, Ack = socket.ntohs(Magic), socket.ntohs(hlen), socket.ntohs(plen), socket.ntohl(Seq), socket.ntohl(Ack)
     data = pkt[HEADER_LEN:]
     print("SKELETON CODE CALLED, FILL this!")

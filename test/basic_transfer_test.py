@@ -47,7 +47,6 @@ def drop_session():
 
     drop_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp2/download_target.chunkhash test/tmp2/download_result.fragment\n''')
 
-
     while True:
         if os.path.exists("test/tmp2/download_result.fragment"):
             success = True
