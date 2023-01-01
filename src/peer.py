@@ -46,8 +46,10 @@ finished_send_dict = dict()  # (from_address:packetid), 用于发送方记录给
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
+CLOSED_TIME = 5
 time_recoder = dict()  #(seq:time)
 acklist = list()
+die_recoder = dict()       #(from_address:time) check if die in reciever
 
 
 
@@ -165,6 +167,9 @@ def deal_get(data, sock, from_addr):
 def deal_data(data, Seq, sock, from_addr):
     global finished_dict, file_cache, receive_connection, finished_chunks
     chunk_hash = receive_connection[from_addr]
+    die_recoder[from_addr] = time.time()
+    if from_addr[1] == 48003:
+        print()
     if from_addr not in finished_dict:
         finished_dict[from_addr] = 0
     if from_addr not in file_cache:
@@ -195,6 +200,7 @@ def deal_data(data, Seq, sock, from_addr):
     # see if finished
     if len(ex_received_chunk[bytes.hex(chunk_hash)]) == CHUNK_DATA_SIZE:
         file_cache.pop(from_addr)
+        die_recoder.pop(from_addr)
         # finished downloading this chunkdata!
         # dump your received chunk to file in dict form using pickle
         finished_chunks.append(chunk_hash)
@@ -350,15 +356,40 @@ def getTimeout():
     else:
         return RTT_TIMEOUT
 
+def judgedie(sock):
+    current_time = time.time()
+    tmplist = list()
+    for from_address, t in die_recoder.items():
+        if current_time-t > CLOSED_TIME:
+            chunkhash = receive_connection[from_address]
+            receive_connection.pop(from_address)
+            ex_received_chunk[bytes.hex(chunkhash)] = bytes()
+            tmplist.append(from_address)
+            file_cache.pop(from_address)
+            finished_dict.pop(from_address)
+
+            whohas_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 0, socket.htons(HEADER_LEN),
+                                        socket.htons(HEADER_LEN + len(chunkhash)), socket.htonl(0), socket.htonl(0))
+            whohas_pkt = whohas_header + chunkhash
+
+            # Step3: flooding whohas to all peers in peer list
+            peer_list = config.peers
+            for p in peer_list:
+                if int(p[0]) != config.identity:
+                    sock.sendto(whohas_pkt, (p[1], int(p[2])))
+
+    for address in tmplist:
+        die_recoder.pop(address)
 
 def peer_run(config):
-    global time_recoder, count
+    global time_recoder, count, die_recoder
     addr = (config.ip, config.port)
     sock = simsocket.SimSocket(config.identity, addr, verbose=config.verbose)
 
     try:
         while True:
             process_timeout(sock)
+            judgedie(sock)
             ready = select.select([sock, sys.stdin], [], [], 0.1)
             read_ready = ready[0]
             if len(read_ready) > 0:
