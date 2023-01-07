@@ -56,7 +56,7 @@ def analyze(file):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('file', type=str, help='log file to visualize', default='log/peer1.log')
+    parser.add_argument('file', type=str, help='log file to visualize')
     args = parser.parse_args()
     file = args.file
     analyze(file)

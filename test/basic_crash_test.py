@@ -47,7 +47,7 @@ def crash_session():
 
     crash_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp4/download_target4.chunkhash test/tmp4/download_result.fragment\n''')
 
-    time.sleep(2)
+    time.sleep(1)
     # crash peer2
     crash_session.peer_list[("127.0.0.1", 48002)].terminate_peer()
 
