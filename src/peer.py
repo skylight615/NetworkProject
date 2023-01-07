@@ -37,7 +37,7 @@ finished_chunks = list()        # 记录已经下载完成的chunk
 count = 0                       # 记录下载指令应该接收到多少chunk
 
 window_size = 1        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
-ssthresh = 64
+ssthresh = 10
 control_state = 0      # 0是slow start， 1是congestion avoidance
 ACK_dict = dict()      # (ack序号:接收次数),用于发送端
 file_cache = dict()    # (from_address : dict(packetid : data)), 用于接受方
@@ -46,12 +46,11 @@ finished_send_dict = dict()  # (from_address:packetid), 用于发送方记录给
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
-CLOSED_TIME = 5
+CLOSED_TIME = 20
 time_recoder = dict()  #(seq:time)
 acklist = list()
 die_recoder = dict()       #(from_address:time) check if die in reciever
-
-
+seqs = list()
 
 def process_download(sock, chunkfile, outputfile):
     '''
@@ -165,15 +164,20 @@ def deal_get(data, sock, from_addr):
 
 
 def deal_data(data, Seq, sock, from_addr):
-    global finished_dict, file_cache, receive_connection, finished_chunks
+    global finished_dict, file_cache, receive_connection, finished_chunks, seqs
     chunk_hash = receive_connection[from_addr]
     die_recoder[from_addr] = time.time()
-    if from_addr[1] == 48003:
-        print()
     if from_addr not in finished_dict:
         finished_dict[from_addr] = 0
     if from_addr not in file_cache:
         file_cache[from_addr] = dict()
+    acklist.append(Seq)
+    old_finish = finished_dict[from_addr]
+    sendnum = 0
+    if len(seqs)>1500:
+        print()
+    if Seq == 300:
+        print()
     if Seq == finished_dict[from_addr] + 1:
         finished_dict[from_addr] = Seq
         # received a DATA pkt
@@ -190,6 +194,7 @@ def deal_data(data, Seq, sock, from_addr):
         ack_pkt = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
                               0, socket.htonl(finished_dict[from_addr]))
         sock.sendto(ack_pkt, from_addr)
+        sendnum = finished_dict[from_addr]
 
     elif Seq > finished_dict[from_addr] + 1:
         file_cache[from_addr][Seq] = data
@@ -197,6 +202,8 @@ def deal_data(data, Seq, sock, from_addr):
         ack_pkt = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 4, socket.htons(HEADER_LEN), socket.htons(HEADER_LEN),
                               0, socket.htonl(finished_dict[from_addr]))
         sock.sendto(ack_pkt, from_addr)
+        sendnum = finished_dict[from_addr]
+    seqs.append((old_finish, Seq, sendnum))
     # see if finished
     if len(ex_received_chunk[bytes.hex(chunk_hash)]) == CHUNK_DATA_SIZE:
         file_cache.pop(from_addr)
@@ -206,8 +213,10 @@ def deal_data(data, Seq, sock, from_addr):
         finished_chunks.append(chunk_hash)
         receive_connection.pop(from_addr)
 
-        with open(ex_output_file, "wb") as wf:
-            pickle.dump(ex_received_chunk, wf)
+
+        if len(receive_connection)==0:
+            with open(ex_output_file, "wb") as wf:
+                pickle.dump(ex_received_chunk, wf)
 
         # add to this peer's haschunk:
         config.haschunks[chunk_hash] = ex_received_chunk[bytes.hex(chunk_hash)]
@@ -233,7 +242,7 @@ def deal_ack(Ack, sock, from_addr):
     global window_size, ssthresh, control_state, ex_sending_chunkhash
     # received an ACK pkt
     ack_num = Ack
-    if Ack == 380:
+    if Ack == 210:
         tem = time.time()-RTT_TIMEOUT
         print()
     if ack_num in ACK_dict:
@@ -273,7 +282,6 @@ def deal_ack(Ack, sock, from_addr):
                 # send next data
                 data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                           socket.htons(HEADER_LEN + len(next_data)), socket.htonl(finished_send_dict[from_addr] + 1), 0)
-                acklist.append(finished_send_dict[from_addr] + 1)
                 finished_send_dict[from_addr] += 1
                 # -----------记录发送时间-------------------------------------
                 time_recoder[from_addr][finished_send_dict[from_addr]] = (time.time(), from_addr)
@@ -296,7 +304,8 @@ def process_inbound_udp(sock):
     elif Type == 2:
         deal_get(data, sock, from_addr)
     elif Type == 3:
-        deal_data(data, Seq, sock, from_addr)
+        if from_addr in receive_connection:
+            deal_data(data, Seq, sock, from_addr)
     elif Type == 4:
         if Ack in time_recoder[from_addr]:
             sample_RTT = time.time() - time_recoder[from_addr][Ack][0]
@@ -324,7 +333,7 @@ def process_timeout(sock):
                 control_state = 0
                 left = (packetid-1) * MAX_PAYLOAD
                 right = min((packetid) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-                next_data = config.haschunks[ex_sending_chunkhash][left: right]
+                next_data = config.haschunks[ex_sending_chunkhash[target_host]][left: right]
                 # send next data
                 data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                           socket.htons(HEADER_LEN + len(next_data)), socket.htonl(packetid), 0)
