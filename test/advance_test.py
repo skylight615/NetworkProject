@@ -66,7 +66,7 @@ And you can visualize your network using net-visual.py
 @pytest.fixture(scope='module')
 def advance_session():
     success = False
-    time_max = 640
+    time_max = 600
     if os.path.exists("test/tmp5/results"):
         shutil.rmtree("test/tmp5/results", ignore_errors=True)
         os.mkdir("test/tmp5/results")
@@ -85,14 +85,14 @@ def advance_session():
 
     # advance_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp5/targets/target1.chunkhash test/tmp5/results/result1.fragment\n''')
     # advance_session.peer_list[("127.0.0.1", 48003)].send_cmd('''DOWNLOAD test/tmp5/targets/target2.chunkhash test/tmp5/results/result2.fragment\n''')
-    # advance_session.peer_list[("127.0.0.1", 48005)].send_cmd('''DOWNLOAD test/tmp5/targets/target3.chunkhash test/tmp5/results/result3.fragment\n''')
-    advance_session.peer_list[("127.0.0.1", 48008)].send_cmd('''DOWNLOAD test/tmp5/targets/target4.chunkhash test/tmp5/results/result4.fragment\n''')
+    advance_session.peer_list[("127.0.0.1", 48005)].send_cmd('''DOWNLOAD test/tmp5/targets/target3.chunkhash test/tmp5/results/result3.fragment\n''')
+    # advance_session.peer_list[("127.0.0.1", 48008)].send_cmd('''DOWNLOAD test/tmp5/targets/target4.chunkhash test/tmp5/results/result4.fragment\n''')
 
 
     while True:
         # if os.path.exists("test/tmp5/results/result1.fragment") and os.path.exists("test/tmp5/results/result2.fragment")\
         #      and os.path.exists("test/tmp5/results/result3.fragment") and os.path.exists("test/tmp5/results/result4.fragment"):
-        if os.path.exists("test/tmp5/results/result4.fragment"):
+        if os.path.exists("test/tmp5/results/result3.fragment"):
             success = True
             break
         elif time.time()-stime>time_max:
@@ -113,9 +113,9 @@ def test_finish(advance_session):
 
 def test_content():
     # check_target_result("test/tmp5/targets/target1.chunkhash", "test/tmp5/results/result1.fragment")
-    # check_target_result("test/tmp5/targets/target2.chunkhash", "test/tmp5/results/result2.fragment")
-    # check_target_result("test/tmp5/targets/target3.chunkhash", "test/tmp5/results/result3.fragment")
-    check_target_result("test/tmp5/targets/target4.chunkhash", "test/tmp5/results/result4.fragment")
+    check_target_result("test/tmp5/targets/target2.chunkhash", "test/tmp5/results/result2.fragment")
+    check_target_result("test/tmp5/targets/target3.chunkhash", "test/tmp5/results/result3.fragment")
+    # check_target_result("test/tmp5/targets/target4.chunkhash", "test/tmp5/results/result4.fragment")
 
 def check_target_result(target_file, result_file):
     target_hash = []

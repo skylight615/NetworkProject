@@ -39,6 +39,7 @@ count = 0                       # 记录下载指令应该接收到多少chunk
 window_size = 1        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
 ssthresh = 10
 control_state = 0      # 0是slow start， 1是congestion avoidance
+congestion_avoidance_count = 0
 ACK_dict = dict()      # (ack序号:接收次数),用于发送端
 file_cache = dict()    # (from_address : dict(packetid : data)), 用于接受方
 finished_dict = dict()  # (from_address, finish_num),记录接收方已经接受到哪个包了,用于接受方
@@ -239,7 +240,7 @@ def deal_data(data, Seq, sock, from_addr):
 
 
 def deal_ack(Ack, sock, from_addr):
-    global window_size, ssthresh, control_state, ex_sending_chunkhash
+    global window_size, ssthresh, control_state, ex_sending_chunkhash, congestion_avoidance_count
     # received an ACK pkt
     ack_num = Ack
     if Ack == 210:
@@ -251,6 +252,7 @@ def deal_ack(Ack, sock, from_addr):
             ACK_dict[ack_num] = 0
             ssthresh = max(window_size / 2, 2)
             window_size = 1
+            congestion_avoidance_count = 0
             control_state = 0
             left = (ack_num) * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
@@ -266,7 +268,10 @@ def deal_ack(Ack, sock, from_addr):
         if not control_state:
             window_size += 1
         else:
-            window_size = math.floor(window_size + 1 / window_size)  # ????
+            congestion_avoidance_count += 1
+            if congestion_avoidance_count == window_size:
+                congestion_avoidance_count = 0
+                window_size += 1
         if window_size > ssthresh:
             control_state = 1
         while finished_send_dict[from_addr] < ack_num + window_size:
@@ -323,13 +328,14 @@ def process_user_input(sock):
 
 
 def process_timeout(sock):
-    global window_size, ssthresh, control_state
+    global window_size, ssthresh, control_state, congestion_avoidance_count
     current_time = time.time()
     for target_host, timeInfo in time_recoder.items():
         for packetid, info in timeInfo.items():
             if current_time - info[0] > getTimeout():
                 ssthresh = max(window_size/2, 2)
                 window_size = 1
+                congestion_avoidance_count = 0
                 control_state = 0
                 left = (packetid-1) * MAX_PAYLOAD
                 right = min((packetid) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
