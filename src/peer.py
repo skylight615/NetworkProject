@@ -3,7 +3,7 @@ import sys
 import os
 import select
 import traceback
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import util.simsocket as simsocket
 import struct
 import socket
@@ -38,8 +38,8 @@ count = 0                       # 记录下载指令应该接收到多少chunk
 
 window_size = dict()        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
 ssthresh = dict()
-control_state = 0      # 0是slow start， 1是congestion avoidance
-congestion_avoidance_count = 0
+control_state = dict()     # 0是slow start， 1是congestion avoidance
+congestion_avoidance_count = dict()
 ACK_dict = dict()      # (ack序号:接收次数),用于发送端
 file_cache = dict()    # (from_address : dict(packetid : data)), 用于接受方
 finished_dict = dict()  # (from_address, finish_num),记录接收方已经接受到哪个包了,用于接受方
@@ -51,7 +51,7 @@ CLOSED_TIME = 60
 IHAVE_TIME = 10
 time_recoder = dict()  #(seq:time)
 ihave_recoder = dict()
-acklist = list()
+cwnd_list = list()
 die_recoder = dict()       #(from_address:time) check if die in reciever
 
 
@@ -154,6 +154,8 @@ def deal_get(data, sock, from_addr):
     if from_addr not in finished_send_dict:
         window_size[from_addr] = 1
         ssthresh[from_addr] = 32
+        control_state[from_addr] = 0
+        congestion_avoidance_count[from_addr] = 0
         finished_send_dict[from_addr] = 1
     for i in range(window_size[from_addr]):
         # received a GET pkt
@@ -166,7 +168,6 @@ def deal_get(data, sock, from_addr):
         # send back DATA
         data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
                                   socket.htons(HEADER_LEN), socket.htonl(i+1), 0)
-        acklist.append(i+1)
         # -----------记录发送时间-------------------------------------
         time_recoder[from_addr][i+1] = (time.time(), from_addr)
         sock.sendto(data_header + chunk_data, from_addr)
@@ -182,7 +183,6 @@ def deal_data(data, Seq, sock, from_addr):
         finished_dict[from_addr] = 0
     if from_addr not in file_cache:
         file_cache[from_addr] = dict()
-    acklist.append(Seq)
     # old_finish = finished_dict[from_addr]
     # sendnum = 0
     if Seq == finished_dict[from_addr] + 1:
@@ -248,16 +248,17 @@ def deal_ack(Ack, sock, from_addr):
     global window_size, ssthresh, control_state, ex_sending_chunkhash, congestion_avoidance_count
     # received an ACK pkt
     ack_num = Ack
+    cwnd_list.append(window_size)
     if ack_num in ACK_dict[from_addr]:
         ACK_dict[from_addr][ack_num] += 1
         if ACK_dict[from_addr][ack_num] >= 4:       #是否要对其进行更改？
             ACK_dict[from_addr][ack_num] = -100
-            if control_state != 2:
+            if control_state[from_addr] != 2:
                 ssthresh[from_addr] = max(window_size[from_addr] / 2, 2)
                 window_size[from_addr] = ssthresh[from_addr] + 3
-                congestion_avoidance_count = 0
-                control_state = 0
-            if control_state == 2:
+                congestion_avoidance_count[from_addr] = 0
+                control_state[from_addr] = 0
+            if control_state[from_addr] == 2:
                 window_size[from_addr] += 1
             left = (ack_num) * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
@@ -275,19 +276,19 @@ def deal_ack(Ack, sock, from_addr):
             if packetid <= ack_num:
                 time_recoder[from_addr].pop(packetid)
 
-        if not control_state:
+        if not control_state[from_addr]:
             window_size[from_addr] += 1
-            congestion_avoidance_count = 0
-        elif control_state == 2:
+            congestion_avoidance_count[from_addr] = 0
+        elif control_state[from_addr] == 2:
             window_size[from_addr] = ssthresh[from_addr]
-            congestion_avoidance_count = 0
-        elif control_state:
-            congestion_avoidance_count += 1
-            if congestion_avoidance_count == window_size[from_addr]:
-                congestion_avoidance_count = 0
+            congestion_avoidance_count[from_addr] = 0
+        elif control_state[from_addr]:
+            congestion_avoidance_count[from_addr] += 1
+            if congestion_avoidance_count[from_addr] == window_size[from_addr]:
+                congestion_avoidance_count[from_addr] = 0
                 window_size[from_addr] += 1
         if window_size[from_addr] >= ssthresh[from_addr]:
-            control_state = 1
+            control_state[from_addr] = 1
         if ack_num == 377 and from_addr[0] == 48008:
             print()
         while finished_send_dict[from_addr] < ack_num + window_size[from_addr] :
@@ -357,8 +358,8 @@ def process_timeout(sock):
                     ACK_dict[info[1]][packetid - 1] = 1
                 ssthresh[target_host] = max(window_size[target_host]/2, 2)
                 window_size[target_host] = 1
-                congestion_avoidance_count = 0
-                control_state = 0
+                congestion_avoidance_count[target_host] = 0
+                control_state[target_host] = 0
                 left = (packetid-1) * MAX_PAYLOAD
                 right = min((packetid) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
                 next_data = config.haschunks[ex_sending_chunkhash[target_host]][left: right]
@@ -453,6 +454,12 @@ def peer_run(config):
     except KeyboardInterrupt:
         pass
     finally:
+        x = range(30)
+        y = cwnd_list
+        plt.plot(x, y, marker='D', markersize=5, label='cwnd')
+        plt.xlabel("time/s")
+        plt.ylabel("window_size/MSS")
+        plt.savefig("cwnd.jpg")
         tem = traceback.format_exc()
         sock.close()
 
