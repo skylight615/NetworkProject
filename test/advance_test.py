@@ -83,16 +83,16 @@ def advance_session():
     advance_session.add_peer(13, "src/peer.py", "test/tmp5/nodes5.map", "test/tmp5/fragments/data5-8.fragment", 100, ("127.0.0.1", 48008), timeout=None)
     advance_session.run_grader()
 
-    # advance_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp5/targets/target1.chunkhash test/tmp5/results/result1.fragment\n''')
-    # advance_session.peer_list[("127.0.0.1", 48003)].send_cmd('''DOWNLOAD test/tmp5/targets/target2.chunkhash test/tmp5/results/result2.fragment\n''')
+    advance_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp5/targets/target1.chunkhash test/tmp5/results/result1.fragment\n''')
+    advance_session.peer_list[("127.0.0.1", 48003)].send_cmd('''DOWNLOAD test/tmp5/targets/target2.chunkhash test/tmp5/results/result2.fragment\n''')
     advance_session.peer_list[("127.0.0.1", 48005)].send_cmd('''DOWNLOAD test/tmp5/targets/target3.chunkhash test/tmp5/results/result3.fragment\n''')
-    # advance_session.peer_list[("127.0.0.1", 48008)].send_cmd('''DOWNLOAD test/tmp5/targets/target4.chunkhash test/tmp5/results/result4.fragment\n''')
-
+    advance_session.peer_list[("127.0.0.1", 48008)].send_cmd('''DOWNLOAD test/tmp5/targets/target4.chunkhash test/tmp5/results/result4.fragment\n''')
+    #
 
     while True:
-        # if os.path.exists("test/tmp5/results/result1.fragment") and os.path.exists("test/tmp5/results/result2.fragment")\
-        #      and os.path.exists("test/tmp5/results/result3.fragment") and os.path.exists("test/tmp5/results/result4.fragment"):
-        if os.path.exists("test/tmp5/results/result3.fragment"):
+        if os.path.exists("test/tmp5/results/result1.fragment") and os.path.exists("test/tmp5/results/result2.fragment") \
+             and os.path.exists("test/tmp5/results/result3.fragment") and os.path.exists("test/tmp5/results/result4.fragment"):
+        # if os.path.exists("test/tmp5/results/result1.fragment"):
             success = True
             break
         elif time.time()-stime>time_max:
@@ -112,10 +112,10 @@ def test_finish(advance_session):
     assert success == True, "Fail to complete transfer or timeout"
 
 def test_content():
-    # check_target_result("test/tmp5/targets/target1.chunkhash", "test/tmp5/results/result1.fragment")
+    check_target_result("test/tmp5/targets/target1.chunkhash", "test/tmp5/results/result1.fragment")
     check_target_result("test/tmp5/targets/target2.chunkhash", "test/tmp5/results/result2.fragment")
     check_target_result("test/tmp5/targets/target3.chunkhash", "test/tmp5/results/result3.fragment")
-    # check_target_result("test/tmp5/targets/target4.chunkhash", "test/tmp5/results/result4.fragment")
+    check_target_result("test/tmp5/targets/target4.chunkhash", "test/tmp5/results/result4.fragment")
 
 def check_target_result(target_file, result_file):
     target_hash = []

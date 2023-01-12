@@ -36,7 +36,7 @@ receive_connection = dict()     # 记录已经建立的接收连接, (addr_from,
 finished_chunks = list()        # 记录已经下载完成的chunk
 count = 0                       # 记录下载指令应该接收到多少chunk
 
-window_size = 1        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
+window_size = dict()        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
 ssthresh = 10
 control_state = 0      # 0是slow start， 1是congestion avoidance
 congestion_avoidance_count = 0
@@ -47,11 +47,13 @@ finished_send_dict = dict()  # (from_address:packetid), 用于发送方记录给
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
-CLOSED_TIME = 20
+CLOSED_TIME = 100
+IHAVE_TIME = 10
 time_recoder = dict()  #(seq:time)
+ihave_recoder = dict()
 acklist = list()
 die_recoder = dict()       #(from_address:time) check if die in reciever
-seqs = list()
+
 
 def process_download(sock, chunkfile, outputfile):
     '''
@@ -129,6 +131,7 @@ def deal_whohas(data, sock, from_addr):
 def deal_ihave(data, sock, from_addr):
     # received an IHAVE pkt
     # see what chunk the sender has
+    global ihave_recoder
     get_chunk_hash = data[:20]
     if get_chunk_hash not in receive_connection.values() and from_addr not in receive_connection.keys():
         receive_connection[from_addr] = get_chunk_hash
@@ -137,17 +140,21 @@ def deal_ihave(data, sock, from_addr):
                                  socket.htons(HEADER_LEN + len(get_chunk_hash)), socket.htonl(0), socket.htonl(0))
         get_pkt = get_header + get_chunk_hash
         sock.sendto(get_pkt, from_addr)
+        ihave_recoder[from_addr] = time.time()
 
 
 def deal_get(data, sock, from_addr):
     global ex_sending_chunkhash
     chunk_hash = data[:20]
     time_recoder[from_addr] = dict()
+    if from_addr not in ACK_dict:
+        ACK_dict[from_addr] = dict()
     if from_addr not in ex_sending_chunkhash.keys():
         ex_sending_chunkhash[from_addr] = bytes.hex(chunk_hash)
     if from_addr not in finished_send_dict:
-        finished_send_dict[from_addr] = window_size
-    for i in range(window_size):
+        window_size[from_addr] = 1
+        finished_send_dict[from_addr] = 1
+    for i in range(window_size[from_addr]):
         # received a GET pkt
         left = i * MAX_PAYLOAD
         right = min((i + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
@@ -165,20 +172,18 @@ def deal_get(data, sock, from_addr):
 
 
 def deal_data(data, Seq, sock, from_addr):
-    global finished_dict, file_cache, receive_connection, finished_chunks, seqs
+    global finished_dict, file_cache, receive_connection, finished_chunks
     chunk_hash = receive_connection[from_addr]
     die_recoder[from_addr] = time.time()
+    if from_addr in ihave_recoder:
+        ihave_recoder.pop(from_addr)
     if from_addr not in finished_dict:
         finished_dict[from_addr] = 0
     if from_addr not in file_cache:
         file_cache[from_addr] = dict()
     acklist.append(Seq)
-    old_finish = finished_dict[from_addr]
-    sendnum = 0
-    if len(seqs)>1500:
-        print()
-    if Seq == 300:
-        print()
+    # old_finish = finished_dict[from_addr]
+    # sendnum = 0
     if Seq == finished_dict[from_addr] + 1:
         finished_dict[from_addr] = Seq
         # received a DATA pkt
@@ -204,7 +209,6 @@ def deal_data(data, Seq, sock, from_addr):
                               0, socket.htonl(finished_dict[from_addr]))
         sock.sendto(ack_pkt, from_addr)
         sendnum = finished_dict[from_addr]
-    seqs.append((old_finish, Seq, sendnum))
     # see if finished
     if len(ex_received_chunk[bytes.hex(chunk_hash)]) == CHUNK_DATA_SIZE:
         file_cache.pop(from_addr)
@@ -243,15 +247,12 @@ def deal_ack(Ack, sock, from_addr):
     global window_size, ssthresh, control_state, ex_sending_chunkhash, congestion_avoidance_count
     # received an ACK pkt
     ack_num = Ack
-    if Ack == 210:
-        tem = time.time()-RTT_TIMEOUT
-        print()
-    if ack_num in ACK_dict:
-        ACK_dict[ack_num] += 1
-        if ACK_dict[ack_num] >= 3:       #是否要对其进行更改？
-            ACK_dict[ack_num] = 0
-            ssthresh = max(window_size / 2, 2)
-            window_size = 1
+    if ack_num in ACK_dict[from_addr]:
+        ACK_dict[from_addr][ack_num] += 1
+        if ACK_dict[from_addr][ack_num] >= 4:       #是否要对其进行更改？
+            ACK_dict[from_addr][ack_num] = -100
+            ssthresh = max(window_size[from_addr] / 2, 2)
+            window_size[from_addr] = 1
             congestion_avoidance_count = 0
             control_state = 0
             left = (ack_num) * MAX_PAYLOAD
@@ -262,21 +263,29 @@ def deal_ack(Ack, sock, from_addr):
                                       socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
             # -----------记录发送时间-------------------------------------
             time_recoder[from_addr][ack_num+1] = (time.time(), from_addr)
+            # finished_send_dict[from_addr] = ack_num+1
             sock.sendto(data_header + next_data, from_addr)
     else:
-        ACK_dict[ack_num] = 1
+        ACK_dict[from_addr][ack_num] = 1
+        for packetid in list(time_recoder[from_addr].keys()):
+            if packetid <= ack_num:
+                time_recoder[from_addr].pop(packetid)
+
         if not control_state:
-            window_size += 1
+            window_size[from_addr] += 1
         else:
             congestion_avoidance_count += 1
-            if congestion_avoidance_count == window_size:
+            if congestion_avoidance_count == window_size[from_addr]:
                 congestion_avoidance_count = 0
-                window_size += 1
-        if window_size > ssthresh:
+                window_size[from_addr] += 1
+        if window_size[from_addr] > ssthresh:
             control_state = 1
-        while finished_send_dict[from_addr] < ack_num + window_size:
+        if ack_num == 377 and from_addr[0] == 48008:
+            print()
+        while finished_send_dict[from_addr] < ack_num + window_size[from_addr] :
             if Ack == math.ceil(CHUNK_DATA_SIZE / MAX_PAYLOAD):
                 # --------------断开连接-----------------------------------
+                time_recoder.pop(from_addr)
                 ex_sending_chunkhash.pop(from_addr)
                 print(f"finished sending {ex_sending_chunkhash}")
                 break
@@ -291,6 +300,9 @@ def deal_ack(Ack, sock, from_addr):
                 # -----------记录发送时间-------------------------------------
                 time_recoder[from_addr][finished_send_dict[from_addr]] = (time.time(), from_addr)
                 sock.sendto(data_header + next_data, from_addr)
+                continue
+            break
+
 
 
 
@@ -328,13 +340,15 @@ def process_user_input(sock):
 
 
 def process_timeout(sock):
-    global window_size, ssthresh, control_state, congestion_avoidance_count
+    global window_size, ssthresh, control_state, congestion_avoidance_count, ACK_dict
     current_time = time.time()
     for target_host, timeInfo in time_recoder.items():
         for packetid, info in timeInfo.items():
             if current_time - info[0] > getTimeout():
-                ssthresh = max(window_size/2, 2)
-                window_size = 1
+                if packetid-1 in ACK_dict[info[1]]:
+                    ACK_dict[info[1]][packetid - 1] = 1
+                ssthresh = max(window_size[target_host]/2, 2)
+                window_size[target_host] = 1
                 congestion_avoidance_count = 0
                 control_state = 0
                 left = (packetid-1) * MAX_PAYLOAD
@@ -348,6 +362,16 @@ def process_timeout(sock):
                 sock.sendto(data_header + next_data, info[1])
                 break
 
+
+def check_ihave(sock):
+    global ihave_recoder
+    for addr in ihave_recoder.keys():
+        if time.time() - ihave_recoder[addr] > IHAVE_TIME:
+            get_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 2, socket.htons(HEADER_LEN),
+                                     socket.htons(HEADER_LEN + len(receive_connection[addr])), socket.htonl(0), socket.htonl(0))
+            get_pkt = get_header + receive_connection[addr]
+            sock.sendto(get_pkt, addr)
+            ihave_recoder[addr] = time.time()
 
 def update_RTT_TIMEOUT(sample_RTT):
     global estimated_RTT, dev_RTT, RTT_TIMEOUT
@@ -403,6 +427,7 @@ def peer_run(config):
 
     try:
         while True:
+            check_ihave(sock)
             process_timeout(sock)
             judgedie(sock)
             ready = select.select([sock, sys.stdin], [], [], 0.1)
@@ -415,8 +440,8 @@ def peer_run(config):
             else:
                 # No pkt nor input arrives during this period 
                 pass
-            if count != len(finished_chunks) and len(receive_connection) == 0:
-                complement_integrity(sock)
+            # if count != len(finished_chunks) and len(receive_connection) == 0:
+            #     complement_integrity(sock)
     except KeyboardInterrupt:
         pass
     finally:
