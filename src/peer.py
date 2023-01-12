@@ -152,11 +152,11 @@ def deal_get(data, sock, from_addr):
     if from_addr not in ex_sending_chunkhash.keys():
         ex_sending_chunkhash[from_addr] = bytes.hex(chunk_hash)
     if from_addr not in finished_send_dict:
-        window_size[from_addr] = 1
-        ssthresh[from_addr] = 64
-        control_state[from_addr] = 0
-        congestion_avoidance_count[from_addr] = 0
         finished_send_dict[from_addr] = 1
+    window_size[from_addr] = 1
+    ssthresh[from_addr] = 64
+    control_state[from_addr] = 0
+    congestion_avoidance_count[from_addr] = 0
     for i in range(window_size[from_addr]):
         # received a GET pkt
         left = i * MAX_PAYLOAD
@@ -218,11 +218,17 @@ def deal_data(data, Seq, sock, from_addr):
         # dump your received chunk to file in dict form using pickle
         finished_chunks.append(chunk_hash)
         receive_connection.pop(from_addr)
-
+        finished_dict.pop(from_addr)
 
         if len(receive_connection)==0:
             with open(ex_output_file, "wb") as wf:
                 pickle.dump(ex_received_chunk, wf)
+                # x = range(30)
+                # y = cwnd_list
+                # plt.plot(x, y, marker='D', markersize=5, label='cwnd')
+                # plt.xlabel("time/s")
+                # plt.ylabel("window_size/MSS")
+                # plt.savefig("cwnd.jpg")
 
         # add to this peer's haschunk:
         config.haschunks[chunk_hash] = ex_received_chunk[bytes.hex(chunk_hash)]
@@ -296,6 +302,7 @@ def deal_ack(Ack, sock, from_addr):
                 # --------------断开连接-----------------------------------
                 time_recoder.pop(from_addr)
                 ex_sending_chunkhash.pop(from_addr)
+                finished_send_dict.pop(from_addr)
                 print(f"finished sending {ex_sending_chunkhash}")
                 break
             elif finished_send_dict[from_addr] < math.ceil(CHUNK_DATA_SIZE / MAX_PAYLOAD):
@@ -454,12 +461,6 @@ def peer_run(config):
     except KeyboardInterrupt:
         pass
     finally:
-        x = range(30)
-        y = cwnd_list
-        plt.plot(x, y, marker='D', markersize=5, label='cwnd')
-        plt.xlabel("time/s")
-        plt.ylabel("window_size/MSS")
-        plt.savefig("cwnd.jpg")
         tem = traceback.format_exc()
         sock.close()
 
