@@ -3,7 +3,7 @@ import sys
 import os
 import select
 import traceback
-
+import matplotlib as plt
 import util.simsocket as simsocket
 import struct
 import socket
