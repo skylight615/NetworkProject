@@ -153,7 +153,7 @@ def deal_get(data, sock, from_addr):
         ex_sending_chunkhash[from_addr] = bytes.hex(chunk_hash)
     if from_addr not in finished_send_dict:
         window_size[from_addr] = 1
-        ssthresh[from_addr] = 32
+        ssthresh[from_addr] = 64
         control_state[from_addr] = 0
         congestion_avoidance_count[from_addr] = 0
         finished_send_dict[from_addr] = 1
