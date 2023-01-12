@@ -37,7 +37,7 @@ finished_chunks = list()        # 记录已经下载完成的chunk
 count = 0                       # 记录下载指令应该接收到多少chunk
 
 window_size = dict()        # 滑动窗口大小,(应该时每次开始传输chunk的时候根据接收和发送双方确定的？)
-ssthresh = 10
+ssthresh = dict()
 control_state = 0      # 0是slow start， 1是congestion avoidance
 congestion_avoidance_count = 0
 ACK_dict = dict()      # (ack序号:接收次数),用于发送端
@@ -47,7 +47,7 @@ finished_send_dict = dict()  # (from_address:packetid), 用于发送方记录给
 estimated_RTT, dev_RTT = 0, 0
 RTT_TIMEOUT = 100
 FIXED_TIMEOUT = 0
-CLOSED_TIME = 100
+CLOSED_TIME = 60
 IHAVE_TIME = 10
 time_recoder = dict()  #(seq:time)
 ihave_recoder = dict()
@@ -153,6 +153,7 @@ def deal_get(data, sock, from_addr):
         ex_sending_chunkhash[from_addr] = bytes.hex(chunk_hash)
     if from_addr not in finished_send_dict:
         window_size[from_addr] = 1
+        ssthresh[from_addr] = 32
         finished_send_dict[from_addr] = 1
     for i in range(window_size[from_addr]):
         # received a GET pkt
@@ -251,16 +252,19 @@ def deal_ack(Ack, sock, from_addr):
         ACK_dict[from_addr][ack_num] += 1
         if ACK_dict[from_addr][ack_num] >= 4:       #是否要对其进行更改？
             ACK_dict[from_addr][ack_num] = -100
-            ssthresh = max(window_size[from_addr] / 2, 2)
-            window_size[from_addr] = 1
-            congestion_avoidance_count = 0
-            control_state = 0
+            if control_state != 2:
+                ssthresh[from_addr] = max(window_size[from_addr] / 2, 2)
+                window_size[from_addr] = ssthresh[from_addr] + 3
+                congestion_avoidance_count = 0
+                control_state = 0
+            if control_state == 2:
+                window_size[from_addr] += 1
             left = (ack_num) * MAX_PAYLOAD
             right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
             next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
             # send next data
             data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
-                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1), 0)
+                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1),  socket.htonl(1))
             # -----------记录发送时间-------------------------------------
             time_recoder[from_addr][ack_num+1] = (time.time(), from_addr)
             # finished_send_dict[from_addr] = ack_num+1
@@ -273,12 +277,16 @@ def deal_ack(Ack, sock, from_addr):
 
         if not control_state:
             window_size[from_addr] += 1
-        else:
+            congestion_avoidance_count = 0
+        elif control_state == 2:
+            window_size[from_addr] = ssthresh[from_addr]
+            congestion_avoidance_count = 0
+        elif control_state:
             congestion_avoidance_count += 1
             if congestion_avoidance_count == window_size[from_addr]:
                 congestion_avoidance_count = 0
                 window_size[from_addr] += 1
-        if window_size[from_addr] > ssthresh:
+        if window_size[from_addr] >= ssthresh[from_addr]:
             control_state = 1
         if ack_num == 377 and from_addr[0] == 48008:
             print()
@@ -344,10 +352,10 @@ def process_timeout(sock):
     current_time = time.time()
     for target_host, timeInfo in time_recoder.items():
         for packetid, info in timeInfo.items():
-            if current_time - info[0] > getTimeout():
+            if current_time - info[0] > 1.5*getTimeout():
                 if packetid-1 in ACK_dict[info[1]]:
                     ACK_dict[info[1]][packetid - 1] = 1
-                ssthresh = max(window_size[target_host]/2, 2)
+                ssthresh[target_host] = max(window_size[target_host]/2, 2)
                 window_size[target_host] = 1
                 congestion_avoidance_count = 0
                 control_state = 0
@@ -356,7 +364,7 @@ def process_timeout(sock):
                 next_data = config.haschunks[ex_sending_chunkhash[target_host]][left: right]
                 # send next data
                 data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
-                                          socket.htons(HEADER_LEN + len(next_data)), socket.htonl(packetid), 0)
+                                          socket.htons(HEADER_LEN + len(next_data)), socket.htonl(packetid),  socket.htonl(2))
                 # -----------记录发送时间-------------------------------------
                 time_recoder[target_host][packetid] = (time.time(), info[1])
                 sock.sendto(data_header + next_data, info[1])
