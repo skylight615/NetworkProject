@@ -264,7 +264,7 @@ def deal_ack(Ack, sock, from_addr):
             next_data = config.haschunks[ex_sending_chunkhash[from_addr]][left: right]
             # send next data
             data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
-                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1),  socket.htonl(1))
+                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1),  0)
             # -----------记录发送时间-------------------------------------
             time_recoder[from_addr][ack_num+1] = (time.time(), from_addr)
             # finished_send_dict[from_addr] = ack_num+1
@@ -364,7 +364,7 @@ def process_timeout(sock):
                 next_data = config.haschunks[ex_sending_chunkhash[target_host]][left: right]
                 # send next data
                 data_header = struct.pack("HBBHHII", socket.htons(MAGIC), TEAM, 3, socket.htons(HEADER_LEN),
-                                          socket.htons(HEADER_LEN + len(next_data)), socket.htonl(packetid),  socket.htonl(2))
+                                          socket.htons(HEADER_LEN + len(next_data)), socket.htonl(packetid),  0)
                 # -----------记录发送时间-------------------------------------
                 time_recoder[target_host][packetid] = (time.time(), info[1])
                 sock.sendto(data_header + next_data, info[1])
